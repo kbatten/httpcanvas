@@ -45,3 +45,11 @@ func (c *Context) LineWidth(f float64) {
 func (c *Context) StrokeStyle(s string) {
 	c.command <- fmt.Sprintf("strokeStyle %s", s)
 }
+
+func (c *Context) FillRect(x, y, w, h float64) {
+	c.command <- fmt.Sprintf("fillRect %f %f %f %f", x, y, w, h)
+}
+
+func (c *Context) StrokeRect(x, y, w, h float64) {
+    c.command <- fmt.Sprintf("strokeRect %f %f %f %f", x, y, w, h)
+}

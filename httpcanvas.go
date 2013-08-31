@@ -2,6 +2,7 @@ package httpcanvas
 
 import (
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,13 +15,15 @@ type Canvas struct {
 	Width   float64
 	Height  float64
 	id      *int
+	started *bool
 	lock    *sync.RWMutex
 	command chan string
 }
 
 func newCanvas(handler CanvasHandler) *Canvas {
-	id := 0
-	return &Canvas{handler, 640, 480, &id, &sync.RWMutex{}, make(chan string, 1000)}
+	id := rand.Int()/2
+	started := false
+	return &Canvas{handler, 640, 480, &id, &started, &sync.RWMutex{}, make(chan string, 1000)}
 }
 
 func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
@@ -73,34 +76,44 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
       function executeNextCommands() {
         getNextCommands()
         while (currentData.length > 0) {
-        command = currentData.shift().split(" ")
-        if (command[0] == "END") {
-          clearInterval(intervalId)
-        } else if (command[0] == "beginPath") {
-          context.beginPath();
-        } else if (command[0] == "moveTo") {
-          context.moveTo(parseFloat(command[1]), parseFloat(command[2]));
-        } else if (command[0] == "lineTo") {
-          context.lineTo(parseFloat(command[1]), parseFloat(command[2]));
-        } else if (command[0] == "stroke") {
-          context.stroke();
-        } else if (command[0] == "arc") {
-          context.arc(parseFloat(command[1]),
-            parseFloat(command[2]),
-            parseFloat(command[3]),
-            parseFloat(command[4]),
-            parseFloat(command[5]),
-            parseBool(command[6]));
-        } else if (command[0] == "fillStyle") {
-            context.fillStyle = command[1]
-        } else if (command[0] == "fill") {
-            context.fill()
-        } else if (command[0] == "lineWidth") {
-            context.lineWidth = parseFloat(command[1])
-        } else if (command[0] == "strokeStyle") {
-            context.strokeStyle = command[1]
+          command = currentData.shift().split(" ")
+          if (command[0] == "END") {
+            clearInterval(intervalId)
+          } else if (command[0] == "beginPath") {
+            context.beginPath();
+          } else if (command[0] == "moveTo") {
+            context.moveTo(parseFloat(command[1]), parseFloat(command[2]));
+          } else if (command[0] == "lineTo") {
+            context.lineTo(parseFloat(command[1]), parseFloat(command[2]));
+          } else if (command[0] == "stroke") {
+            context.stroke();
+          } else if (command[0] == "arc") {
+            context.arc(parseFloat(command[1]),
+              parseFloat(command[2]),
+              parseFloat(command[3]),
+              parseFloat(command[4]),
+              parseFloat(command[5]),
+              parseBool(command[6]));
+          } else if (command[0] == "fillStyle") {
+              context.fillStyle = command[1]
+          } else if (command[0] == "fill") {
+              context.fill()
+          } else if (command[0] == "lineWidth") {
+              context.lineWidth = parseFloat(command[1])
+          } else if (command[0] == "strokeStyle") {
+              context.strokeStyle = command[1]
+          } else if (command[0] == "fillRect") {
+              context.fillRect(parseFloat(command[1]),
+                parseFloat(command[2]),
+                parseFloat(command[3]),
+                parseFloat(command[4]))
+          }else if (command[0] == "strokeRect") {
+              context.strokeRect(parseFloat(command[1]),
+                parseFloat(command[2]),
+                parseFloat(command[3]),
+                parseFloat(command[4]))
+          }
         }
-      }
       }
 
       intervalId = setInterval("executeNextCommands()", 10)
@@ -117,14 +130,17 @@ func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// sync
 		c.lock.Lock()
 		(*c.id)++
-		id := *c.id
+		started := *c.started
 		c.lock.Unlock()
 		c.writeContainer(w, r)
-		if id == 1 {
+		if !started {
+			c.lock.Lock()
+			(*c.started) = true
 			go func() {
 				c.handler(&Context{c.command, c.Width, c.Height})
 				c.command <- "END"
 			}()
+			c.lock.Unlock()
 		}
 		return
 	}
