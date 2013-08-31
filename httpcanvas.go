@@ -57,8 +57,7 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
           try {
             xmlHttp.open("GET", "/command?id=` + fmt.Sprintf("%d", id) + `", false);
             xmlHttp.send(null);
-            currentData = xmlHttp.responseText.split(",");
-            console.log(currentData.length)
+            currentData = xmlHttp.responseText.split("~");
           } catch (e) {
             currentData = ["END"]
           }
@@ -76,7 +75,7 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
       function executeNextCommands() {
         getNextCommands()
         while (currentData.length > 0) {
-          command = currentData.shift().split(" ")
+          command = currentData.shift().split("|")
           if (command[0] == "END") {
             clearInterval(intervalId)
           } else if (command[0] == "beginPath") {
@@ -159,7 +158,7 @@ func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				select {
 				case command = <-c.command:
 					if len(commandGroup) > 0 {
-						commandGroup += ","
+						commandGroup += "~"
 					}
 					commandGroup += command
 				default:
