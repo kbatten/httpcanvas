@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type CanvasHandler func(*Context)
@@ -13,17 +14,20 @@ type Canvas struct {
 	Width   float64
 	Height  float64
 	id      *int
+	lock    *sync.RWMutex
 	command chan string
 }
 
 func newCanvas(handler CanvasHandler) *Canvas {
 	id := 0
-	return &Canvas{handler, 640, 480, &id, make(chan string)}
+	return &Canvas{handler, 640, 480, &id, &sync.RWMutex{}, make(chan string)}
 }
 
 func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
 	// sync
+	c.lock.RLock()
 	id := *c.id
+	c.lock.RUnlock()
 	container := `<!DOCTYPE HTML>
 <!-- http://www.html5canvastutorials.com/tutorials/html5-canvas-lines/ -->
 <html>
@@ -97,9 +101,11 @@ func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	command, _, args := stringPartition(r.RequestURI, "?")
 
 	if command == "/" && r.Method == "GET" {
-		// TODO: sync
+		// sync
+		c.lock.Lock()
 		(*c.id)++
 		id := *c.id
+		c.lock.Unlock()
 		c.writeContainer(w, r)
 		if id == 1 {
 			go func() {
@@ -110,8 +116,11 @@ func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: sync
-	idExpected := fmt.Sprintf("id=%d", *c.id)
+	// sync
+	c.lock.RLock()
+	id := *c.id
+	c.lock.RUnlock()
+	idExpected := fmt.Sprintf("id=%d", id)
 
 	if command == "/command" && r.Method == "GET" {
 		if args == idExpected {
