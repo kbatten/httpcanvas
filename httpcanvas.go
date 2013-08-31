@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"html/template"
 	"strings"
-	"sync"
 )
 
 type CanvasHandler func(*Context)
@@ -14,23 +14,20 @@ type Canvas struct {
 	handler CanvasHandler
 	Width   float64
 	Height  float64
-	id      *int
-	started *bool
-	lock    *sync.RWMutex
+	Unique  string
+	started bool
 	command chan string
 }
 
 func newCanvas(handler CanvasHandler) *Canvas {
-	id := rand.Int()/2
-	started := false
-	return &Canvas{handler, 640, 480, &id, &started, &sync.RWMutex{}, make(chan string, 1000)}
+	return &Canvas{handler, 640, 480, "", false, make(chan string, 1000)}
 }
 
-func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
-	// sync
-	c.lock.RLock()
-	id := *c.id
-	c.lock.RUnlock()
+func (c *Canvas) updateUnique() {
+	c.Unique = fmt.Sprintf("%f", rand.Float64())
+}
+
+func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
 	container := `<!DOCTYPE HTML>
 <!-- http://www.html5canvastutorials.com/tutorials/html5-canvas-lines/ -->
 <html>
@@ -46,16 +43,14 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
     </style>
   </head>
   <body>
-    <canvas id="myCanvas" class="displayBox"
-      width="` + fmt.Sprintf("%d", int(c.Width)) + `"
-      height="` + fmt.Sprintf("%d", int(c.Height)) + `"></canvas>
+    <canvas id="myCanvas" class="displayBox" width="{{.Width}}" height="{{.Height}}"></canvas>
     <script>
       xmlHttp = new XMLHttpRequest();
       currentData = []
       function getNextCommands() {
         if (currentData.length == 0) {
           try {
-            xmlHttp.open("GET", "/command?id=` + fmt.Sprintf("%d", id) + `", false);
+            xmlHttp.open("GET", "/command?id={{.Unique}}", false);
             xmlHttp.send(null);
             currentData = xmlHttp.responseText.split("~");
           } catch (e) {
@@ -124,39 +119,37 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
     </script>
   </body>
 </html>`
-	fmt.Fprintf(w, container)
+template, err := template.New("basic").Parse(container)
+    if err != nil {
+        return err
+    }
+    err = template.Execute(w, c)
+    return err
 }
 
-func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (c *Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	command, _, args := stringPartition(r.RequestURI, "?")
 
 	if command == "/" && r.Method == "GET" {
-		// sync
-		c.lock.Lock()
-		(*c.id)++
-		started := *c.started
-		c.lock.Unlock()
-		c.writeContainer(w, r)
-		if !started {
-			c.lock.Lock()
-			(*c.started) = true
+		c.updateUnique()
+		err := c.renderHtml(w, r)
+		if err != nil {
+			return
+		}
+		if !c.started {
+			c.started = true
 			go func() {
 				c.handler(&Context{c.command, c.Width, c.Height})
 				c.command <- "END"
 			}()
-			c.lock.Unlock()
 		}
 		return
 	}
 
-	// sync
-	c.lock.RLock()
-	id := *c.id
-	c.lock.RUnlock()
-	idExpected := fmt.Sprintf("id=%d", id)
+	uniqueExpected := fmt.Sprintf("id=%s", c.Unique)
 
 	if command == "/command" && r.Method == "GET" {
-		if args == idExpected {
+		if args == uniqueExpected {
 			commandGroup := ""
 			command := " "
 			for len(command) > 0 {
