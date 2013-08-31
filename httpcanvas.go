@@ -3,6 +3,7 @@ package httpcanvas
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 type CanvasHandler func(*Context)
@@ -11,14 +12,18 @@ type Canvas struct {
 	handler CanvasHandler
 	Width   float64
 	Height  float64
+	id      *int
 	command chan string
 }
 
 func newCanvas(handler CanvasHandler) *Canvas {
-	return &Canvas{handler, 640, 480, make(chan string)}
+	id := 0
+	return &Canvas{handler, 640, 480, &id, make(chan string)}
 }
 
 func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
+	// sync
+	id := *c.id
 	container := `<!DOCTYPE HTML>
 <!-- http://www.html5canvastutorials.com/tutorials/html5-canvas-lines/ -->
 <html>
@@ -40,7 +45,7 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
     <script>
       function getNextCommand() {
         xmlHttp = new XMLHttpRequest();
-        xmlHttp.open("GET", "/command", false);
+        xmlHttp.open("GET", "/command?id=` + fmt.Sprintf("%d", id) + `", false);
         xmlHttp.send(null);
         return xmlHttp.responseText;
       }
@@ -89,19 +94,34 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.RequestURI == "/" && r.Method == "GET" {
+	command, _, args := stringPartition(r.RequestURI, "?")
+
+	if command == "/" && r.Method == "GET" {
+		// TODO: sync
+		(*c.id)++
+		id := *c.id
 		c.writeContainer(w, r)
-		go func() {
-			c.handler(&Context{c.command, c.Width, c.Height})
-			c.command <- "END"
-		}()
+		if id == 1 {
+			go func() {
+				c.handler(&Context{c.command, c.Width, c.Height})
+				c.command <- "END"
+			}()
+		}
 		return
 	}
 
-	if r.RequestURI == "/command" && r.Method == "GET" {
-		command := <-c.command
-		fmt.Fprintf(w, command)
-		return
+	// TODO: sync
+	idExpected := fmt.Sprintf("id=%d", *c.id)
+
+	if command == "/command" && r.Method == "GET" {
+		if args == idExpected {
+			command := <-c.command
+			fmt.Fprintf(w, command)
+			return
+		} else {
+			fmt.Fprintf(w, "END")
+			return
+		}
 	}
 
 	http.NotFound(w, r)
@@ -109,4 +129,13 @@ func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func ListenAndServe(addr string, handler CanvasHandler) (err error) {
 	return http.ListenAndServe(addr, newCanvas(handler))
+}
+
+func stringPartition(s, sep string) (string, string, string) {
+	sepPos := strings.Index(s, sep)
+	if sepPos == -1 { // no seperator found
+		return s, "", ""
+	}
+	split := strings.SplitN(s, sep, 2)
+	return split[0], sep, split[1]
 }
