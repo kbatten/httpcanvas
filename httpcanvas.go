@@ -106,8 +106,13 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
                 parseFloat(command[2]),
                 parseFloat(command[3]),
                 parseFloat(command[4]))
-          }else if (command[0] == "strokeRect") {
+          } else if (command[0] == "strokeRect") {
               context.strokeRect(parseFloat(command[1]),
+                parseFloat(command[2]),
+                parseFloat(command[3]),
+                parseFloat(command[4]))
+          } else if (command[0] == "clearRect") {
+              context.clearRect(parseFloat(command[1]),
                 parseFloat(command[2]),
                 parseFloat(command[3]),
                 parseFloat(command[4]))

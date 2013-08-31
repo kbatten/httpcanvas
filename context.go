@@ -53,3 +53,7 @@ func (c *Context) FillRect(x, y, w, h float64) {
 func (c *Context) StrokeRect(x, y, w, h float64) {
     c.command <- fmt.Sprintf("strokeRect|%f|%f|%f|%f", x, y, w, h)
 }
+
+func (c *Context) ClearRect(x, y, w, h float64) {
+    c.command <- fmt.Sprintf("clearRect|%f|%f|%f|%f", x, y, w, h)
+}
