@@ -20,7 +20,7 @@ type Canvas struct {
 
 func newCanvas(handler CanvasHandler) *Canvas {
 	id := 0
-	return &Canvas{handler, 640, 480, &id, &sync.RWMutex{}, make(chan string)}
+	return &Canvas{handler, 640, 480, &id, &sync.RWMutex{}, make(chan string, 1000)}
 }
 
 func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
@@ -47,11 +47,19 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
       width="` + fmt.Sprintf("%d", int(c.Width)) + `"
       height="` + fmt.Sprintf("%d", int(c.Height)) + `"></canvas>
     <script>
-      function getNextCommand() {
-        xmlHttp = new XMLHttpRequest();
-        xmlHttp.open("GET", "/command?id=` + fmt.Sprintf("%d", id) + `", false);
-        xmlHttp.send(null);
-        return xmlHttp.responseText;
+      xmlHttp = new XMLHttpRequest();
+      currentData = []
+      function getNextCommands() {
+        if (currentData.length == 0) {
+          try {
+            xmlHttp.open("GET", "/command?id=` + fmt.Sprintf("%d", id) + `", false);
+            xmlHttp.send(null);
+            currentData = xmlHttp.responseText.split(",");
+            console.log(currentData.length)
+          } catch (e) {
+            currentData = ["END"]
+          }
+        }
       }
 
       function parseBool(b) {
@@ -60,12 +68,14 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
 
       var canvas = document.getElementById('myCanvas');
       var context = canvas.getContext('2d');
+      var intervalId = 0
 
-      for (;;) {
-        command = getNextCommand().split(" ")
-        console.log(command);
+      function executeNextCommands() {
+        getNextCommands()
+        while (currentData.length > 0) {
+        command = currentData.shift().split(" ")
         if (command[0] == "END") {
-          break;
+          clearInterval(intervalId)
         } else if (command[0] == "beginPath") {
           context.beginPath();
         } else if (command[0] == "moveTo") {
@@ -91,6 +101,9 @@ func (c *Canvas) writeContainer(w http.ResponseWriter, r *http.Request) {
             context.strokeStyle = command[1]
         }
       }
+      }
+
+      intervalId = setInterval("executeNextCommands()", 10)
     </script>
   </body>
 </html>`
@@ -124,8 +137,23 @@ func (c Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if command == "/command" && r.Method == "GET" {
 		if args == idExpected {
-			command := <-c.command
-			fmt.Fprintf(w, command)
+			commandGroup := ""
+			command := " "
+			for len(command) > 0 {
+				select {
+				case command = <-c.command:
+					if len(commandGroup) > 0 {
+						commandGroup += ","
+					}
+					commandGroup += command
+				default:
+					// if we have at least one command, then send it off
+					if len(commandGroup) > 0 {
+						command = ""
+					}
+				}
+			}
+			fmt.Fprintf(w, commandGroup)
 			return
 		} else {
 			fmt.Fprintf(w, "END")
