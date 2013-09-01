@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -143,7 +144,12 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (c *Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	command, _, args := stringPartition(r.RequestURI, "?")
+	u, err := url.Parse(r.RequestURI)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	command := u.Path
 
 	if command == "/" && r.Method == "GET" {
 		c.updateUnique()
@@ -161,32 +167,37 @@ func (c *Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uniqueExpected := fmt.Sprintf("id=%s", c.Unique)
+	q := u.Query()
+	if _, ok := q["id"] ; !ok {
+		http.NotFound(w, r)
+		return
+	}
+	unique := q["id"][0]
+
+	if unique != c.Unique {
+		http.NotFound(w, r)
+		return
+	}
 
 	if command == "/command" && r.Method == "GET" {
-		if args == uniqueExpected {
-			commandGroup := ""
-			command := " "
-			for len(command) > 0 {
-				select {
-				case command = <-c.command:
-					if len(commandGroup) > 0 {
-						commandGroup += "~"
-					}
-					commandGroup += command
-				default:
-					// if we have at least one command, then send it off
-					if len(commandGroup) > 0 {
-						command = ""
-					}
+		commandGroup := ""
+		command := " "
+		for len(command) > 0 {
+			select {
+			case command = <-c.command:
+				if len(commandGroup) > 0 {
+					commandGroup += "~"
+				}
+				commandGroup += command
+			default:
+				// if we have at least one command, then send it off
+				if len(commandGroup) > 0 {
+					command = ""
 				}
 			}
-			fmt.Fprintf(w, commandGroup)
-			return
-		} else {
-			fmt.Fprintf(w, "END")
-			return
 		}
+		fmt.Fprintf(w, commandGroup)
+		return
 	}
 
 	http.NotFound(w, r)
