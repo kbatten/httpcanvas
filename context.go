@@ -5,9 +5,52 @@ import (
 )
 
 type Context struct {
+	Width  float64
+	Height float64
+
 	command chan string
-	Width   float64
-	Height  float64
+	mouse   chan mouseMovement
+	mouseX  float64
+	mouseY  float64
+	mouseClickedX float64
+	mouseClickedY float64
+	mouseClicked       bool
+}
+
+func newContext(w, h float64, c chan string, m chan mouseMovement) *Context {
+	return &Context{w, h, c, m, 0, 0, 0, 0, false}
+}
+
+func (c *Context) updateMouse() {
+	reading := true
+    for reading {
+        select {
+        case m := <-c.mouse:
+			switch m.command {
+			case "MOUSECLICK":
+				c.mouseClicked = true
+				c.mouseClickedX = m.x
+				c.mouseClickedY = m.y
+			case "MOUSEMOVE":
+				c.mouseX = m.x
+				c.mouseY = m.y
+			}
+        default:
+            reading = false
+        }
+    }
+}
+
+func (c *Context) MouseLocation() (float64, float64) {
+	c.updateMouse()
+	return c.mouseX, c.mouseY
+}
+
+func (c *Context) MouseClicked() (float64, float64, bool) {
+	c.updateMouse()
+	clicked := c.mouseClicked
+	c.mouseClicked = false
+	return c.mouseClickedX, c.mouseClickedY, clicked
 }
 
 func (c *Context) BeginPath() {
@@ -58,11 +101,10 @@ func (c *Context) ClearRect(x, y, w, h float64) {
 	c.command <- fmt.Sprintf("clearRect|%f|%f|%f|%f", x, y, w, h)
 }
 
-func (c *Context) NewFrame() {
-	c.command <- "NEWFRAME" // swap buffer we are writing too
-	c.ClearRect(0, 0, c.Width, c.Height)
+func (c *Context) ClearFrame() {
+	c.command <- "CLEARFRAME" // erase buffered frame
 }
 
 func (c *Context) ShowFrame() {
-	c.command <- "SHOWFRAME" // swap buffer that is visible
+	c.command <- "SHOWFRAME" // swap buffer
 }

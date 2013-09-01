@@ -3,11 +3,19 @@ package httpcanvas
 import (
 	"fmt"
 	"html/template"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
+	"strconv"
 )
+
+type mouseMovement struct {
+	command string
+	x       float64
+	y       float64
+}
 
 type CanvasHandler func(*Context)
 
@@ -18,10 +26,13 @@ type Canvas struct {
 	Unique  string
 	started bool
 	command chan string
+	mouse   chan mouseMovement
 }
 
 func newCanvas(handler CanvasHandler) *Canvas {
-	return &Canvas{handler, 640, 480, "", false, make(chan string, 1000)}
+	return &Canvas{handler, 640, 480, "", false,
+		make(chan string, 10000),
+		make(chan mouseMovement, 10000)}
 }
 
 func (c *Canvas) updateUnique() {
@@ -33,6 +44,7 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
 <!-- http://www.html5canvastutorials.com/tutorials/html5-canvas-lines/ -->
 <html>
   <head>
+    <script src="/jquery.js"></script>
     <style>
       body {
         margin: 0px;
@@ -40,55 +52,88 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
       }
       canvas {
         border: 1px dashed rgb(170, 170, 170);
-        position:absolute; top:0; left:0;
+        position:absolute; top:100px; left:100px;
         visibility: hidden;
       }
     </style>
   </head>
   <body>
     <canvas width="{{.Width}}" height="{{.Height}}"></canvas>
-	<canvas width="{{.Width}}" height="{{.Height}}"></canvas>
+    <canvas width="{{.Width}}" height="{{.Height}}"></canvas>
     <script>
-      xmlHttp = new XMLHttpRequest();
-      currentData = []
-      function getNextCommands() {
+      var currentData = []
+      var canvases = document.getElementsByTagName('canvas');
+      var contexts = []
+      contexts[0] = canvases[0].getContext('2d');
+      contexts[1] = canvases[1].getContext('2d');
+      var context = contexts[0]
+      var bufferIndex = 0
+
+      var intervalId = 0
+
+      function getMoreCommands() {
         if (currentData.length == 0) {
+          $.ajaxSetup({async: false});
           try {
-            xmlHttp.open("GET", "/command?id={{.Unique}}", false);
-            xmlHttp.send(null);
-            currentData = xmlHttp.responseText.split("~");
-          } catch (e) {
+            $.get("/command", {id:"{{.Unique}}"}, function(data) {
+              currentData = data.split("~");
+            })
+            .fail(function() {
+              currentData = ["END"]
+            });
+          } catch(e) {
             currentData = ["END"]
           }
         }
+      }
+
+      var nextMouseMoveEvent = 0
+      function postMouseEvent(cmdName, e) {
+        if (e.offsetX == undefined) {
+          x = e.originalEvent.layerX;
+          y = e.originalEvent.layerY;
+        } else {
+          x = e.offsetX;
+          y = e.offsetY;
+        }
+        if (x == undefined || y == undefined) {
+          return;
+        }
+
+        if (cmdName == "MOUSEMOVE") {
+          var now = new Date().getTime();
+          if (now < nextMouseMoveEvent) {
+            return;
+          }
+          nextMouseMoveEvent = now + 30; // throttle to 30ms
+        }
+
+        var cmd = cmdName + " " + x + " " + y
+        $.ajaxSetup({async: true});
+        $.post("/command", {id:"{{.Unique}}", cmd:cmd})
       }
 
       function parseBool(b) {
         return b == "true"
       }
 
-      var buffers = document.getElementsByTagName('canvas');
-      var bufferWriteIndex = 0;
-      var context = buffers[bufferWriteIndex].getContext('2d');
-      var bufferVisibleIndex = 0;
-      buffers[bufferVisibleIndex].style.visibility='visible';
-      var intervalId = 0;
-
-      function executeNextCommands() {
-        getNextCommands()
+      function drawFrame() {
+        getMoreCommands()
         while (currentData.length > 0) {
-          command = currentData.shift().split("|")
+          var commandString = currentData.shift()
+          var command = commandString.split("|");
           if (command[0] == "END") {
             clearInterval(intervalId)
-          } else if (command[0] == "NEWFRAME") {
-            bufferWriteIndex = 1 - bufferWriteIndex
-            context = buffers[bufferWriteIndex].getContext('2d');
-            // fix  up indexes (for example if we missed a NEWFRAME
-            bufferVisibleIndex = 1 - bufferWriteIndex
+          } else if (command[0] == "CLEARFRAME") {
+            contexts[bufferIndex].clearRect(
+                0, 0, canvases[bufferIndex].width,
+                canvases[bufferIndex].height);
           } else if (command[0] == "SHOWFRAME") {
-            bufferVisibleIndex = 1 - bufferVisibleIndex
-            buffers[bufferVisibleIndex].style.visibility='visible';
-            buffers[1-bufferVisibleIndex].style.visibility='hidden';
+            canvases[bufferIndex].style.visibility='visible';
+            canvases[1-bufferIndex].style.visibility='hidden';
+            bufferIndex = 1 - bufferIndex
+            context = contexts[bufferIndex]
+            break;
           } else if (command[0] == "beginPath") {
             context.beginPath();
           } else if (command[0] == "moveTo") {
@@ -131,7 +176,21 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
         }
       }
 
-      intervalId = setInterval("executeNextCommands()", 10)
+      $(canvases[0]).click(function(e) {
+        postMouseEvent("MOUSECLICK", e);
+      });
+	  $(canvases[0]).mousemove(function(e) {
+        postMouseEvent("MOUSEMOVE", e);
+      });
+
+      $(canvases[1]).click(function(e) {
+        postMouseEvent("MOUSECLICK", e);
+      });
+      $(canvases[1]).mousemove(function(e) {
+        postMouseEvent("MOUSEMOVE", e);
+      });
+
+      intervalId = setInterval("drawFrame()", 30)
     </script>
   </body>
 </html>`
@@ -147,9 +206,16 @@ func (c *Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u, err := url.Parse(r.RequestURI)
 	if err != nil {
 		http.NotFound(w, r)
+		log.Println(err)
 		return
 	}
 	command := u.Path
+
+	if command == "/jquery.js" {
+		// TODO: set mime type
+		w.Write(jQuery)
+		return
+	}
 
 	if command == "/" && r.Method == "GET" {
 		c.updateUnique()
@@ -160,19 +226,27 @@ func (c *Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !c.started {
 			c.started = true
 			go func() {
-				c.handler(&Context{c.command, c.Width, c.Height})
+				c.handler(newContext(c.Width, c.Height, c.command, c.mouse))
 				c.command <- "END"
+				close(c.command)
+				close(c.mouse)
 			}()
 		}
 		return
 	}
 
 	q := u.Query()
-	if _, ok := q["id"] ; !ok {
-		http.NotFound(w, r)
-		return
+	unique := ""
+	if _, ok := q["id"]; !ok {
+		unique = r.PostFormValue("id")
+		if unique == "" {
+			http.NotFound(w, r)
+			log.Println("missing id", r)
+			return
+		}
+	} else {
+		unique = q["id"][0]
 	}
-	unique := q["id"][0]
 
 	if unique != c.Unique {
 		http.NotFound(w, r)
@@ -181,25 +255,45 @@ func (c *Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if command == "/command" && r.Method == "GET" {
 		commandGroup := ""
-		command := " "
-		for len(command) > 0 {
-			select {
-			case command = <-c.command:
-				if len(commandGroup) > 0 {
-					commandGroup += "~"
-				}
-				commandGroup += command
-			default:
-				// if we have at least one command, then send it off
-				if len(commandGroup) > 0 {
-					command = ""
-				}
+		for command := range c.command {
+			if len(commandGroup) > 0 {
+				commandGroup += "~"
+			}
+			commandGroup += command
+			if command == "SHOWFRAME" {
+				break
 			}
 		}
-		fmt.Fprintf(w, commandGroup)
+		w.Write([]byte(commandGroup))
 		return
 	}
 
+	if command == "/command" && r.Method == "POST" {
+		cmd := strings.Fields(r.PostFormValue("cmd"))
+		if len(cmd) == 0 {
+			log.Println("missing command")
+			http.NotFound(w, r)
+			return
+		}
+		if cmd[0] == "MOUSEMOVE" || cmd[0] == "MOUSECLICK" {
+			if len(cmd) == 3 {
+				x, err := strconv.Atoi(cmd[1])
+				if err != nil {
+					http.NotFound(w, r)
+					log.Println("invalid x")
+					return
+				}
+				y, err := strconv.Atoi(cmd[2])
+				if err != nil {
+					http.NotFound(w, r)
+					log.Println("invalid y")
+					return
+				}
+				c.mouse <- mouseMovement{cmd[0], float64(x), float64(y)}
+				return
+			}
+		}
+	}
 	http.NotFound(w, r)
 }
 
