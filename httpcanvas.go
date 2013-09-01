@@ -2,9 +2,9 @@ package httpcanvas
 
 import (
 	"fmt"
+	"html/template"
 	"math/rand"
 	"net/http"
-	"html/template"
 	"strings"
 )
 
@@ -82,6 +82,8 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
           } else if (command[0] == "NEWFRAME") {
             bufferWriteIndex = 1 - bufferWriteIndex
             context = buffers[bufferWriteIndex].getContext('2d');
+            // fix  up indexes (for example if we missed a NEWFRAME
+            bufferVisibleIndex = 1 - bufferWriteIndex
           } else if (command[0] == "SHOWFRAME") {
             bufferVisibleIndex = 1 - bufferVisibleIndex
             buffers[bufferVisibleIndex].style.visibility='visible';
@@ -132,12 +134,12 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
     </script>
   </body>
 </html>`
-template, err := template.New("basic").Parse(container)
-    if err != nil {
-        return err
-    }
-    err = template.Execute(w, c)
-    return err
+	template, err := template.New("basic").Parse(container)
+	if err != nil {
+		return err
+	}
+	err = template.Execute(w, c)
+	return err
 }
 
 func (c *Canvas) ServeHTTP(w http.ResponseWriter, r *http.Request) {
