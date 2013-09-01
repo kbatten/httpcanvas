@@ -57,3 +57,12 @@ func (c *Context) StrokeRect(x, y, w, h float64) {
 func (c *Context) ClearRect(x, y, w, h float64) {
     c.command <- fmt.Sprintf("clearRect|%f|%f|%f|%f", x, y, w, h)
 }
+
+func (c *Context) NewFrame() {
+	c.command <- "NEWFRAME" // swap buffer we are writing too
+	c.ClearRect(0, 0, c.Width, c.Height)
+}
+
+func (c *Context) ShowFrame() {
+	c.command <- "SHOWFRAME" // swap buffer that is visible
+}

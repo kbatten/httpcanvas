@@ -37,13 +37,16 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
         margin: 0px;
         padding: 0px;
       }
-      .displayBox {
-        border: 1px dashed rgb(170, 170, 170)
+      canvas {
+        border: 1px dashed rgb(170, 170, 170);
+        position:absolute; top:0; left:0;
+        visibility: hidden;
       }
     </style>
   </head>
   <body>
-    <canvas id="myCanvas" class="displayBox" width="{{.Width}}" height="{{.Height}}"></canvas>
+    <canvas width="{{.Width}}" height="{{.Height}}"></canvas>
+	<canvas width="{{.Width}}" height="{{.Height}}"></canvas>
     <script>
       xmlHttp = new XMLHttpRequest();
       currentData = []
@@ -63,9 +66,12 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
         return b == "true"
       }
 
-      var canvas = document.getElementById('myCanvas');
-      var context = canvas.getContext('2d');
-      var intervalId = 0
+      var buffers = document.getElementsByTagName('canvas');
+      var bufferWriteIndex = 0;
+      var context = buffers[bufferWriteIndex].getContext('2d');
+      var bufferVisibleIndex = 0;
+      buffers[bufferVisibleIndex].style.visibility='visible';
+      var intervalId = 0;
 
       function executeNextCommands() {
         getNextCommands()
@@ -73,6 +79,13 @@ func (c *Canvas) renderHtml(w http.ResponseWriter, r *http.Request) error {
           command = currentData.shift().split("|")
           if (command[0] == "END") {
             clearInterval(intervalId)
+          } else if (command[0] == "NEWFRAME") {
+            bufferWriteIndex = 1 - bufferWriteIndex
+            context = buffers[bufferWriteIndex].getContext('2d');
+          } else if (command[0] == "SHOWFRAME") {
+            bufferVisibleIndex = 1 - bufferVisibleIndex
+            buffers[bufferVisibleIndex].style.visibility='visible';
+            buffers[1-bufferVisibleIndex].style.visibility='hidden';
           } else if (command[0] == "beginPath") {
             context.beginPath();
           } else if (command[0] == "moveTo") {
